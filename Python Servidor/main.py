@@ -1,4 +1,6 @@
 import os
+import logging
+import traceback
 from enum import Enum
 
 from fastapi import FastAPI, HTTPException
@@ -10,11 +12,13 @@ from google.genai import types
 from groq import Groq
 
 
+logger = logging.getLogger("uvicorn.error")
+
 app = FastAPI(title="Zora AI Router")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://profound-rabanadas-f9e503.netlify.app/"],  # depois troque pelo seu domínio
+    allow_origins=["*"],  # depois você pode trocar pelo seu domínio
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -38,7 +42,7 @@ class ChatResponse(BaseModel):
     provider: Provider
 
 
-def _lang_rule() -> str:
+def same_language_rule() -> str:
     return (
         "Always reply in the same language as the user's latest message. "
         "If the user writes in Portuguese, answer in Portuguese. "
@@ -54,7 +58,7 @@ GROQ_PROFILES = {
         "model": os.getenv("GROQ_MODEL_1", "llama-3.3-70b-versatile"),
         "system": os.getenv(
             "GROQ_SYSTEM_PROMPT_1",
-            f"{_lang_rule()} Be fast, direct, and practical."
+            f"{same_language_rule()} Be fast, direct, and practical."
         ),
     },
     "openai": {
@@ -62,7 +66,7 @@ GROQ_PROFILES = {
         "model": os.getenv("GROQ_MODEL_2", "llama-3.3-70b-versatile"),
         "system": os.getenv(
             "GROQ_SYSTEM_PROMPT_2",
-            f"{_lang_rule()} Be smart, concise, and clear."
+            f"{same_language_rule()} Be smart, concise, and clear."
         ),
     },
 }
@@ -73,7 +77,7 @@ GEMINI_PROFILES = {
         "model": os.getenv("GEMINI_MODEL_1", "gemini-2.5-flash"),
         "system": os.getenv(
             "GEMINI_SYSTEM_PROMPT_1",
-            f"{_lang_rule()} Be balanced, clear, and helpful."
+            f"{same_language_rule()} Be balanced, clear, and helpful."
         ),
         "temperature": float(os.getenv("GEMINI_TEMP_1", "0.8")),
     },
@@ -82,7 +86,10 @@ GEMINI_PROFILES = {
         "model": os.getenv("GEMINI_MODEL_2", "gemini-2.5-flash"),
         "system": os.getenv(
             "ZORA_SYSTEM_PROMPT",
-            f"{_lang_rule()} You are Zora AI. Be modern, elegant, useful, and natural."
+            (
+                f"{same_language_rule()} "
+                "You are Zora AI. Be modern, elegant, useful, natural, and helpful."
+            ),
         ),
         "temperature": float(os.getenv("GEMINI_TEMP_2", "0.85")),
     },
@@ -91,6 +98,7 @@ GEMINI_PROFILES = {
 
 def ask_groq_profile(user_text: str, provider_key: str) -> str:
     profile = GROQ_PROFILES[provider_key]
+
     if not profile["api_key"]:
         raise HTTPException(
             status_code=500,
@@ -113,6 +121,7 @@ def ask_groq_profile(user_text: str, provider_key: str) -> str:
 
 def ask_gemini_profile(user_text: str, provider_key: str) -> str:
     profile = GEMINI_PROFILES[provider_key]
+
     if not profile["api_key"]:
         raise HTTPException(
             status_code=500,
@@ -160,25 +169,29 @@ def chat(payload: ChatRequest):
         raise HTTPException(status_code=400, detail="Mensagem vazia.")
 
     try:
+        logger.info(f"Provider recebido: {payload.provider}")
+
         if payload.provider == Provider.groq:
             reply = ask_groq_profile(text, "groq")
-        elif payload.provider == Provider.openai:
-            reply = ask_groq_profile(text, "openai")
         elif payload.provider == Provider.gemini:
             reply = ask_gemini_profile(text, "gemini")
+        elif payload.provider == Provider.openai:
+            reply = ask_groq_profile(text, "openai")
         elif payload.provider == Provider.custom:
             reply = ask_gemini_profile(text, "custom")
         else:
             raise HTTPException(status_code=400, detail="Provider inválido.")
 
+        logger.info(f"Resposta OK para provider {payload.provider}")
         return ChatResponse(reply=reply, provider=payload.provider)
 
-    except HTTPException:
+    except HTTPException as e:
+        logger.error(f"HTTPException no provider {payload.provider}: {e.detail}")
         raise
     except Exception as e:
+        logger.error(f"Erro no provider {payload.provider}: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(
             status_code=500,
             detail=f"Erro no provider {payload.provider}: {str(e)}"
         )
-
-
