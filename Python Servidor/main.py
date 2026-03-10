@@ -14,7 +14,7 @@ app = FastAPI(title="Zora AI Router")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # depois troque pelo seu domínio
+    allow_origins=["https://profound-rabanadas-f9e503.netlify.app/"],  # depois troque pelo seu domínio
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -180,4 +180,5 @@ def chat(payload: ChatRequest):
             status_code=500,
             detail=f"Erro no provider {payload.provider}: {str(e)}"
         )
+
 
