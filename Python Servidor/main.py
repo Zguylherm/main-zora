@@ -14,7 +14,7 @@ app = FastAPI(title="Zora AI Router")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # depois troca pelo seu domínio
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,6 +39,7 @@ class ChatResponse(BaseModel):
 
 
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY")) if os.getenv("OPENAI_API_KEY") else None
+zora_openai_client = OpenAI(api_key=os.getenv("ZORA_OPENAI_API_KEY")) if os.getenv("ZORA_OPENAI_API_KEY") else None
 gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY")) if os.getenv("GEMINI_API_KEY") else None
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY")) if os.getenv("GROQ_API_KEY") else None
 
@@ -55,15 +56,15 @@ def ask_openai_normal(user_text: str) -> str:
 
 
 def ask_zora_ai(user_text: str) -> str:
-    if openai_client is None:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY não configurada.")
+    if zora_openai_client is None:
+        raise HTTPException(status_code=500, detail="ZORA_OPENAI_API_KEY não configurada.")
 
     zora_prompt = os.getenv(
         "ZORA_SYSTEM_PROMPT",
         "Você é a Zora AI. Responda em português, de forma clara, moderna, útil e inteligente."
     )
 
-    response = openai_client.responses.create(
+    response = zora_openai_client.responses.create(
         model=os.getenv("ZORA_OPENAI_MODEL", "gpt-5"),
         instructions=zora_prompt,
         input=user_text,
