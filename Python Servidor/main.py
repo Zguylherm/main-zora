@@ -7,9 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from google import genai
 from google.genai import types
+from groq import Groq
 
 
-app = FastAPI(title="Zora AI Gemini Router")
+app = FastAPI(title="Zora AI Router")
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,10 +22,10 @@ app.add_middleware(
 
 
 class Provider(str, Enum):
-    groq = "groq"      # perfil Gemini 1
-    gemini = "gemini"  # perfil Gemini 2
-    openai = "openai"  # perfil Gemini 3
-    custom = "custom"  # perfil Gemini 4 = Zora AI
+    groq = "groq"       # Groq perfil 1
+    gemini = "gemini"   # Gemini perfil 1
+    openai = "openai"   # Groq perfil 2
+    custom = "custom"   # Gemini perfil 2 = Zora AI
 
 
 class ChatRequest(BaseModel):
@@ -37,83 +38,94 @@ class ChatResponse(BaseModel):
     provider: Provider
 
 
-def make_client(env_name: str):
-    key = os.getenv(env_name) or os.getenv("GEMINI_API_KEY")
-    return genai.Client(api_key=key) if key else None
+def _lang_rule() -> str:
+    return (
+        "Always reply in the same language as the user's latest message. "
+        "If the user writes in Portuguese, answer in Portuguese. "
+        "If the user writes in English, answer in English. "
+        "If the user writes in another language, answer in that same language. "
+        "Do not translate unless the user asks."
+    )
 
 
-clients = {
-    "groq": make_client("GEMINI_API_KEY_1"),
-    "gemini": make_client("GEMINI_API_KEY_2"),
-    "openai": make_client("GEMINI_API_KEY_3"),
-    "custom": make_client("GEMINI_API_KEY_4"),
-}
-
-
-COMMON_LANGUAGE_RULE = (
-    "Always reply in the same language as the user's latest message. "
-    "If the user writes in Portuguese, answer in Portuguese. "
-    "If the user writes in English, answer in English. "
-    "If the user writes in another language, answer in that same language. "
-    "Do not translate unless the user asks."
-)
-
-PROFILES = {
+GROQ_PROFILES = {
     "groq": {
-        "model": os.getenv("GEMINI_MODEL_1", "gemini-2.5-flash"),
-        "system_instruction": (
-            f"{COMMON_LANGUAGE_RULE} "
-            "Be fast, direct, and practical."
+        "api_key": os.getenv("GROQ_API_KEY_1", ""),
+        "model": os.getenv("GROQ_MODEL_1", "llama-3.3-70b-versatile"),
+        "system": os.getenv(
+            "GROQ_SYSTEM_PROMPT_1",
+            f"{_lang_rule()} Be fast, direct, and practical."
         ),
-        "temperature": float(os.getenv("GEMINI_TEMP_1", "0.7")),
-    },
-    "gemini": {
-        "model": os.getenv("GEMINI_MODEL_2", "gemini-2.5-flash"),
-        "system_instruction": (
-            f"{COMMON_LANGUAGE_RULE} "
-            "Be balanced, clear, and helpful."
-        ),
-        "temperature": float(os.getenv("GEMINI_TEMP_2", "0.8")),
     },
     "openai": {
-        "model": os.getenv("GEMINI_MODEL_3", "gemini-2.5-flash"),
-        "system_instruction": (
-            f"{COMMON_LANGUAGE_RULE} "
-            "Be smart, concise, and natural."
+        "api_key": os.getenv("GROQ_API_KEY_2", ""),
+        "model": os.getenv("GROQ_MODEL_2", "llama-3.3-70b-versatile"),
+        "system": os.getenv(
+            "GROQ_SYSTEM_PROMPT_2",
+            f"{_lang_rule()} Be smart, concise, and clear."
         ),
-        "temperature": float(os.getenv("GEMINI_TEMP_3", "0.75")),
+    },
+}
+
+GEMINI_PROFILES = {
+    "gemini": {
+        "api_key": os.getenv("GEMINI_API_KEY_1", ""),
+        "model": os.getenv("GEMINI_MODEL_1", "gemini-2.5-flash"),
+        "system": os.getenv(
+            "GEMINI_SYSTEM_PROMPT_1",
+            f"{_lang_rule()} Be balanced, clear, and helpful."
+        ),
+        "temperature": float(os.getenv("GEMINI_TEMP_1", "0.8")),
     },
     "custom": {
-        "model": os.getenv("GEMINI_MODEL_4", "gemini-2.5-flash"),
-        "system_instruction": os.getenv(
+        "api_key": os.getenv("GEMINI_API_KEY_2", ""),
+        "model": os.getenv("GEMINI_MODEL_2", "gemini-2.5-flash"),
+        "system": os.getenv(
             "ZORA_SYSTEM_PROMPT",
-            (
-                f"{COMMON_LANGUAGE_RULE} "
-                "You are Zora AI. Respond clearly, elegantly, usefully, and naturally. "
-                "Keep a modern tone and be genuinely helpful."
-            ),
+            f"{_lang_rule()} You are Zora AI. Be modern, elegant, useful, and natural."
         ),
-        "temperature": float(os.getenv("GEMINI_TEMP_4", "0.85")),
+        "temperature": float(os.getenv("GEMINI_TEMP_2", "0.85")),
     },
 }
 
 
-def ask_gemini_profile(user_text: str, provider: Provider) -> str:
-    provider_key = provider.value
-    client = clients.get(provider_key)
-    profile = PROFILES[provider_key]
-
-    if client is None:
+def ask_groq_profile(user_text: str, provider_key: str) -> str:
+    profile = GROQ_PROFILES[provider_key]
+    if not profile["api_key"]:
         raise HTTPException(
             status_code=500,
-            detail=f"API key do perfil {provider_key} não configurada."
+            detail=f"GROQ API key do perfil {provider_key} não configurada."
         )
+
+    client = Groq(api_key=profile["api_key"])
+
+    response = client.chat.completions.create(
+        model=profile["model"],
+        messages=[
+            {"role": "system", "content": profile["system"]},
+            {"role": "user", "content": user_text},
+        ],
+    )
+
+    content = response.choices[0].message.content
+    return content or f"Sem resposta do perfil {provider_key}."
+
+
+def ask_gemini_profile(user_text: str, provider_key: str) -> str:
+    profile = GEMINI_PROFILES[provider_key]
+    if not profile["api_key"]:
+        raise HTTPException(
+            status_code=500,
+            detail=f"GEMINI API key do perfil {provider_key} não configurada."
+        )
+
+    client = genai.Client(api_key=profile["api_key"])
 
     response = client.models.generate_content(
         model=profile["model"],
         contents=user_text,
         config=types.GenerateContentConfig(
-            system_instruction=profile["system_instruction"],
+            system_instruction=profile["system"],
             temperature=profile["temperature"],
         ),
     )
@@ -123,20 +135,20 @@ def ask_gemini_profile(user_text: str, provider: Provider) -> str:
 
 @app.get("/")
 def root():
-    return {"ok": True, "name": "Zora AI Gemini Router"}
+    return {"ok": True, "name": "Zora AI Router"}
 
 
 @app.get("/health")
 def health():
     return {
-        "gemini_api_key_1": bool(os.getenv("GEMINI_API_KEY_1") or os.getenv("GEMINI_API_KEY")),
-        "gemini_api_key_2": bool(os.getenv("GEMINI_API_KEY_2") or os.getenv("GEMINI_API_KEY")),
-        "gemini_api_key_3": bool(os.getenv("GEMINI_API_KEY_3") or os.getenv("GEMINI_API_KEY")),
-        "gemini_api_key_4": bool(os.getenv("GEMINI_API_KEY_4") or os.getenv("GEMINI_API_KEY")),
-        "model_1": PROFILES["groq"]["model"],
-        "model_2": PROFILES["gemini"]["model"],
-        "model_3": PROFILES["openai"]["model"],
-        "model_4": PROFILES["custom"]["model"],
+        "groq_1_key": bool(os.getenv("GROQ_API_KEY_1")),
+        "groq_2_key": bool(os.getenv("GROQ_API_KEY_2")),
+        "gemini_1_key": bool(os.getenv("GEMINI_API_KEY_1")),
+        "gemini_2_key": bool(os.getenv("GEMINI_API_KEY_2")),
+        "groq_1_model": os.getenv("GROQ_MODEL_1", "llama-3.3-70b-versatile"),
+        "groq_2_model": os.getenv("GROQ_MODEL_2", "llama-3.3-70b-versatile"),
+        "gemini_1_model": os.getenv("GEMINI_MODEL_1", "gemini-2.5-flash"),
+        "gemini_2_model": os.getenv("GEMINI_MODEL_2", "gemini-2.5-flash"),
     }
 
 
@@ -148,8 +160,19 @@ def chat(payload: ChatRequest):
         raise HTTPException(status_code=400, detail="Mensagem vazia.")
 
     try:
-        reply = ask_gemini_profile(text, payload.provider)
+        if payload.provider == Provider.groq:
+            reply = ask_groq_profile(text, "groq")
+        elif payload.provider == Provider.openai:
+            reply = ask_groq_profile(text, "openai")
+        elif payload.provider == Provider.gemini:
+            reply = ask_gemini_profile(text, "gemini")
+        elif payload.provider == Provider.custom:
+            reply = ask_gemini_profile(text, "custom")
+        else:
+            raise HTTPException(status_code=400, detail="Provider inválido.")
+
         return ChatResponse(reply=reply, provider=payload.provider)
+
     except HTTPException:
         raise
     except Exception as e:
@@ -157,3 +180,4 @@ def chat(payload: ChatRequest):
             status_code=500,
             detail=f"Erro no provider {payload.provider}: {str(e)}"
         )
+
