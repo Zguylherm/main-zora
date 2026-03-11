@@ -1,15 +1,13 @@
 import os
 from enum import Enum
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
 from openai import OpenAI
 from google import genai
 from groq import Groq
-
-from zora_limit import check_chat_limit
 
 
 app = FastAPI(title="Zora AI Router")
@@ -33,8 +31,6 @@ class Provider(str, Enum):
 class ChatRequest(BaseModel):
     message: str
     provider: Provider
-    fingerprint: str | None = None
-    browser_id: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -117,17 +113,12 @@ def root():
     return {"ok": True, "name": "Zora AI Router"}
 
 
-def handle_chat(payload: ChatRequest, request: Request):
+@app.post("/chat", response_model=ChatResponse)
+def chat(payload: ChatRequest):
     text = payload.message.strip()
 
     if not text:
         raise HTTPException(status_code=400, detail="Mensagem vazia.")
-
-    check_chat_limit(
-        request=request,
-        fingerprint=payload.fingerprint,
-        browser_id=payload.browser_id,
-    )
 
     try:
         if payload.provider == Provider.openai:
@@ -147,13 +138,3 @@ def handle_chat(payload: ChatRequest, request: Request):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/chat", response_model=ChatResponse)
-def chat(payload: ChatRequest, request: Request):
-    return handle_chat(payload, request)
-
-
-@app.post("/api/chat", response_model=ChatResponse)
-def chat_api(payload: ChatRequest, request: Request):
-    return handle_chat(payload, request)
