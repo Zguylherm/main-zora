@@ -1,31 +1,35 @@
 import os
+import logging
+import traceback
 from enum import Enum
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
-from openai import OpenAI
 from google import genai
+from google.genai import types
 from groq import Groq
 
+
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(title="Zora AI Router")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=["*"],  # depois você pode trocar pelo seu domínio
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
 class Provider(str, Enum):
-    groq = "groq"
-    gemini = "gemini"
-    openai = "openai"
-    custom = "custom"   # custom = Zora AI
+    groq = "groq"       # Groq perfil 1
+    gemini = "gemini"   # Gemini perfil 1
+    openai = "openai"   # Groq perfil 2
+    custom = "custom"   # Gemini perfil 2 = Zora AI
 
 
 class ChatRequest(BaseModel):
@@ -38,79 +42,123 @@ class ChatResponse(BaseModel):
     provider: Provider
 
 
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY")) if os.getenv("OPENAI_API_KEY") else None
-zora_openai_client = OpenAI(api_key=os.getenv("ZORA_OPENAI_API_KEY")) if os.getenv("ZORA_OPENAI_API_KEY") else None
-gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY")) if os.getenv("GEMINI_API_KEY") else None
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY")) if os.getenv("GROQ_API_KEY") else None
-
-
-def ask_openai_normal(user_text: str) -> str:
-    if openai_client is None:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY não configurada.")
-
-    response = openai_client.responses.create(
-        model=os.getenv("OPENAI_MODEL", "gpt-5-mini"),
-        input=user_text,
-    )
-    return response.output_text or "Sem resposta da OpenAI."
-
-
-def ask_zora_ai(user_text: str) -> str:
-    if zora_openai_client is None:
-        raise HTTPException(status_code=500, detail="ZORA_OPENAI_API_KEY não configurada.")
-
-    zora_prompt = os.getenv(
-        "ZORA_SYSTEM_PROMPT",
-        "Você é a Zora AI. Responda em português, de forma clara, moderna, útil e inteligente."
+def same_language_rule() -> str:
+    return (
+        "Always reply in the same language as the user's latest message. "
+        "If the user writes in Portuguese, answer in Portuguese. "
+        "If the user writes in English, answer in English. "
+        "If the user writes in another language, answer in that same language. "
+        "Do not translate unless the user asks."
     )
 
-    response = zora_openai_client.responses.create(
-        model=os.getenv("ZORA_OPENAI_MODEL", "gpt-5"),
-        instructions=zora_prompt,
-        input=user_text,
-    )
-    return response.output_text or "Sem resposta da Zora AI."
+
+GROQ_PROFILES = {
+    "groq": {
+        "api_key": os.getenv("GROQ_API_KEY_1", ""),
+        "model": os.getenv("GROQ_MODEL_1", "llama-3.3-70b-versatile"),
+        "system": os.getenv(
+            "GROQ_SYSTEM_PROMPT_1",
+            f"{same_language_rule()} Be fast, direct, and practical."
+        ),
+    },
+    "openai": {
+        "api_key": os.getenv("GROQ_API_KEY_2", ""),
+        "model": os.getenv("GROQ_MODEL_2", "llama-3.3-70b-versatile"),
+        "system": os.getenv(
+            "GROQ_SYSTEM_PROMPT_2",
+            f"{same_language_rule()} Be smart, concise, and clear."
+        ),
+    },
+}
+
+GEMINI_PROFILES = {
+    "gemini": {
+        "api_key": os.getenv("GEMINI_API_KEY_1", ""),
+        "model": os.getenv("GEMINI_MODEL_1", "gemini-2.5-flash"),
+        "system": os.getenv(
+            "GEMINI_SYSTEM_PROMPT_1",
+            f"{same_language_rule()} Be balanced, clear, and helpful."
+        ),
+        "temperature": float(os.getenv("GEMINI_TEMP_1", "0.8")),
+    },
+    "custom": {
+        "api_key": os.getenv("GEMINI_API_KEY_2", ""),
+        "model": os.getenv("GEMINI_MODEL_2", "gemini-2.5-flash"),
+        "system": os.getenv(
+            "ZORA_SYSTEM_PROMPT",
+            (
+                f"{same_language_rule()} "
+                "You are Zora AI. Be modern, elegant, useful, natural, and helpful."
+            ),
+        ),
+        "temperature": float(os.getenv("GEMINI_TEMP_2", "0.85")),
+    },
+}
 
 
-def ask_gemini(user_text: str) -> str:
-    if gemini_client is None:
-        raise HTTPException(status_code=500, detail="GEMINI_API_KEY não configurada.")
+def ask_groq_profile(user_text: str, provider_key: str) -> str:
+    profile = GROQ_PROFILES[provider_key]
 
-    prompt = os.getenv(
-        "GEMINI_SYSTEM_PROMPT",
-        "Responda em português, de forma clara e objetiva."
-    )
+    if not profile["api_key"]:
+        raise HTTPException(
+            status_code=500,
+            detail=f"GROQ API key do perfil {provider_key} não configurada."
+        )
 
-    response = gemini_client.models.generate_content(
-        model=os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
-        contents=f"{prompt}\n\nUsuário: {user_text}",
-    )
-    return response.text or "Sem resposta do Gemini."
+    client = Groq(api_key=profile["api_key"])
 
-
-def ask_groq(user_text: str) -> str:
-    if groq_client is None:
-        raise HTTPException(status_code=500, detail="GROQ_API_KEY não configurada.")
-
-    prompt = os.getenv(
-        "GROQ_SYSTEM_PROMPT",
-        "Responda em português, de forma rápida e direta."
-    )
-
-    response = groq_client.chat.completions.create(
-        model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
+    response = client.chat.completions.create(
+        model=profile["model"],
         messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": user_text}
+            {"role": "system", "content": profile["system"]},
+            {"role": "user", "content": user_text},
         ],
     )
+
     content = response.choices[0].message.content
-    return content or "Sem resposta da Groq."
+    return content or f"Sem resposta do perfil {provider_key}."
+
+
+def ask_gemini_profile(user_text: str, provider_key: str) -> str:
+    profile = GEMINI_PROFILES[provider_key]
+
+    if not profile["api_key"]:
+        raise HTTPException(
+            status_code=500,
+            detail=f"GEMINI API key do perfil {provider_key} não configurada."
+        )
+
+    client = genai.Client(api_key=profile["api_key"])
+
+    response = client.models.generate_content(
+        model=profile["model"],
+        contents=user_text,
+        config=types.GenerateContentConfig(
+            system_instruction=profile["system"],
+            temperature=profile["temperature"],
+        ),
+    )
+
+    return response.text or f"Sem resposta do perfil {provider_key}."
 
 
 @app.get("/")
 def root():
     return {"ok": True, "name": "Zora AI Router"}
+
+
+@app.get("/health")
+def health():
+    return {
+        "groq_1_key": bool(os.getenv("GROQ_API_KEY_1")),
+        "groq_2_key": bool(os.getenv("GROQ_API_KEY_2")),
+        "gemini_1_key": bool(os.getenv("GEMINI_API_KEY_1")),
+        "gemini_2_key": bool(os.getenv("GEMINI_API_KEY_2")),
+        "groq_1_model": os.getenv("GROQ_MODEL_1", "llama-3.3-70b-versatile"),
+        "groq_2_model": os.getenv("GROQ_MODEL_2", "llama-3.3-70b-versatile"),
+        "gemini_1_model": os.getenv("GEMINI_MODEL_1", "gemini-2.5-flash"),
+        "gemini_2_model": os.getenv("GEMINI_MODEL_2", "gemini-2.5-flash"),
+    }
 
 
 @app.post("/chat", response_model=ChatResponse)
@@ -121,20 +169,29 @@ def chat(payload: ChatRequest):
         raise HTTPException(status_code=400, detail="Mensagem vazia.")
 
     try:
-        if payload.provider == Provider.openai:
-            reply = ask_openai_normal(text)
+        logger.info(f"Provider recebido: {payload.provider}")
+
+        if payload.provider == Provider.groq:
+            reply = ask_groq_profile(text, "groq")
         elif payload.provider == Provider.gemini:
-            reply = ask_gemini(text)
-        elif payload.provider == Provider.groq:
-            reply = ask_groq(text)
+            reply = ask_gemini_profile(text, "gemini")
+        elif payload.provider == Provider.openai:
+            reply = ask_groq_profile(text, "openai")
         elif payload.provider == Provider.custom:
-            reply = ask_zora_ai(text)
+            reply = ask_gemini_profile(text, "custom")
         else:
             raise HTTPException(status_code=400, detail="Provider inválido.")
 
+        logger.info(f"Resposta OK para provider {payload.provider}")
         return ChatResponse(reply=reply, provider=payload.provider)
 
-    except HTTPException:
+    except HTTPException as e:
+        logger.error(f"HTTPException no provider {payload.provider}: {e.detail}")
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Erro no provider {payload.provider}: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(
+            status_code=500,
+            detail=f"Erro no provider {payload.provider}: {str(e)}"
+        )
