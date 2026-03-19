@@ -29,7 +29,7 @@ app.include_router(status_router)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # depois você pode trocar pelo seu domínio
+    allow_origins=["*"],  # depois troque pelo seu domínio
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -170,6 +170,16 @@ def chat(payload: ChatRequest):
     started_at = time.time()
 
     try:
+        # comando manual para testar status "Ausente"
+        if text == "/teste-ausente":
+            time.sleep(5)
+            elapsed = time.time() - started_at
+            mark_success(elapsed)
+            return ChatResponse(
+                reply="Teste de ausência concluído com sucesso.",
+                provider=payload.provider
+            )
+
         logger.info(f"Provider recebido: {payload.provider}")
 
         if payload.provider == Provider.groq:
