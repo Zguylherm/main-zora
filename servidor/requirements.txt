@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-openai
-google-genai
-groq
 pydantic
+groq
+google-genai
+python-dotenv
