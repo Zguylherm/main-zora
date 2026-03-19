@@ -29,10 +29,10 @@ app.add_middleware(
 
 
 class Provider(str, Enum):
-    groq = "groq"       # Groq perfil 1
-    gemini = "gemini"   # Gemini perfil 1
-    openai = "openai"   # Groq perfil 2
-    custom = "custom"   # Gemini perfil 2 = Zora AI
+    groq = "groq"
+    gemini = "gemini"
+    openai = "openai"
+    custom = "custom"
 
 
 class ChatRequest(BaseModel):
@@ -104,10 +104,6 @@ GEMINI_PROFILES = {
 }
 
 
-# ----------------------------
-# Status global do sistema
-# ----------------------------
-
 status_lock = Lock()
 
 runtime_state = {
@@ -116,7 +112,7 @@ runtime_state = {
     "last_success_at": 0.0,
     "last_response_time": 0.0,
     "last_error_at": 0.0,
-    "last_error_kind": None,      # transient | severe | config
+    "last_error_kind": None,
     "last_error_message": None,
 }
 
@@ -166,10 +162,25 @@ def classify_exception(exc: Exception) -> tuple[str, int, str]:
     message = str(exc).lower()
     status_code = getattr(exc, "status_code", None)
 
-    if status_code == 429 or any(x in message for x in ["rate limit", "quota", "resource exhausted", "too many requests"]):
+    if status_code == 429 or any(
+        x in message for x in [
+            "rate limit",
+            "quota",
+            "resource exhausted",
+            "too many requests",
+        ]
+    ):
         return ("severe", 429, "Limite da API atingido.")
 
-    if status_code in (401, 403) or any(x in message for x in ["invalid api key", "api key not valid", "permission denied", "unauthorized", "forbidden"]):
+    if status_code in (401, 403) or any(
+        x in message for x in [
+            "invalid api key",
+            "api key not valid",
+            "permission denied",
+            "unauthorized",
+            "forbidden",
+        ]
+    ):
         return ("severe", 503, "Erro de autenticação na API.")
 
     if status_code in (500, 502, 503, 504) or any(
@@ -182,7 +193,7 @@ def classify_exception(exc: Exception) -> tuple[str, int, str]:
             "service unavailable",
             "internal server error",
             "bad gateway",
-            "gateway"
+            "gateway",
         ]
     ):
         return ("transient", 503, "Provider indisponível no momento.")
@@ -220,10 +231,6 @@ def get_system_status() -> tuple[str, Optional[str]]:
 
     return ("online", "Sistema operacional.")
 
-
-# ----------------------------
-# Providers
-# ----------------------------
 
 def ask_groq_profile(user_text: str, provider_key: str) -> str:
     profile = GROQ_PROFILES[provider_key]
@@ -271,18 +278,16 @@ def ask_gemini_profile(user_text: str, provider_key: str) -> str:
     return response.text or f"Sem resposta do perfil {provider_key}."
 
 
-# ----------------------------
-# Rotas
-# ----------------------------
-
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 def root():
     return {"ok": True, "name": "Zora AI Router"}
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
+@app.api_route("/api/health", methods=["GET", "HEAD"])
 def health():
     return {
+        "ok": True,
         "groq_1_key": bool(os.getenv("GROQ_API_KEY_1")),
         "groq_2_key": bool(os.getenv("GROQ_API_KEY_2")),
         "gemini_1_key": bool(os.getenv("GEMINI_API_KEY_1")),
@@ -295,8 +300,8 @@ def health():
     }
 
 
-@app.get("/status", response_model=StatusResponse)
-@app.get("/api/status", response_model=StatusResponse)
+@app.api_route("/status", methods=["GET", "HEAD"], response_model=StatusResponse)
+@app.api_route("/api/status", methods=["GET", "HEAD"], response_model=StatusResponse)
 def status():
     current_status, detail = get_system_status()
     return StatusResponse(status=current_status, detail=detail)
