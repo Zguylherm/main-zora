@@ -125,20 +125,17 @@ def get_system_status() -> tuple[str, Optional[str]]:
         last_error_message = runtime_state["last_error_message"]
         last_response_time = runtime_state["last_response_time"]
 
-    # Online / Ausente durante processamento
     if in_flight > 0 and current_request_started_at > 0:
         running_for = now - current_request_started_at
         if running_for >= 2.5:
             return ("away", "Processando lentamente.")
         return ("online", "Processando.")
 
-    # Último erro recente
     if last_error_at > 0 and (now - last_error_at) <= 90:
         if last_error_kind == "severe":
             return ("offline", last_error_message or "Falha grave no provider.")
         return ("away", last_error_message or "Instabilidade temporária.")
 
-    # Resposta lenta recente
     if last_response_time >= 10:
         return ("away", "Resposta lenta recentemente.")
 
@@ -155,8 +152,11 @@ def status():
 @router.api_route("/health", methods=["GET", "HEAD"])
 @router.api_route("/api/health", methods=["GET", "HEAD"])
 def health():
+    current_status, detail = get_system_status()
     return {
         "ok": True,
+        "status": current_status,
+        "detail": detail,
         "groq_1_key": bool(os.getenv("GROQ_API_KEY_1")),
         "groq_2_key": bool(os.getenv("GROQ_API_KEY_2")),
         "gemini_1_key": bool(os.getenv("GEMINI_API_KEY_1")),
@@ -165,5 +165,4 @@ def health():
         "groq_2_model": os.getenv("GROQ_MODEL_2", "llama-3.3-70b-versatile"),
         "gemini_1_model": os.getenv("GEMINI_MODEL_1", "gemini-2.5-flash"),
         "gemini_2_model": os.getenv("GEMINI_MODEL_2", "gemini-2.5-flash"),
-        "system_status": get_system_status()[0],
     }
